@@ -1,0 +1,35 @@
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 160
+    spike_limit_mib: 32
+  batch: {}
+
+exporters:
+  otlp_http/axiom_traces:
+    endpoint: https://${env:AXIOM_DOMAIN}
+    headers:
+      Authorization: "Bearer ${env:AXIOM_API_TOKEN}"
+      x-axiom-dataset: "${env:AXIOM_TRACES_DATASET}"
+  otlp_http/axiom_metrics:
+    endpoint: https://${env:AXIOM_DOMAIN}
+    headers:
+      Authorization: "Bearer ${env:AXIOM_API_TOKEN}"
+      x-axiom-metrics-dataset: "${env:AXIOM_METRICS_DATASET}"
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp_http/axiom_traces]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp_http/axiom_metrics]

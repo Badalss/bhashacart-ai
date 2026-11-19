@@ -1,0 +1,1 @@
+"""BhashaCart AI application package."""

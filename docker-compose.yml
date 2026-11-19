@@ -1,0 +1,107 @@
+name: bhashacart-ai
+
+x-runtime: &runtime
+  image: bhashacart-ai:local
+  build: .
+  init: true
+  restart: unless-stopped
+  read_only: true
+  tmpfs:
+    - /tmp
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  stop_grace_period: 45s
+  env_file:
+    - path: .env
+      required: false
+  environment:
+    VALKEY_URL: ${COMPOSE_VALKEY_URL:-redis://valkey:6379/0}
+    OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+  networks:
+    - default
+    - queue
+  depends_on:
+    valkey:
+      condition: service_healthy
+    otel-collector:
+      condition: service_started
+
+services:
+  api:
+    <<: *runtime
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/readyz', timeout=2).close()"
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  worker-live:
+    <<: *runtime
+    command: ["arq", "app.worker.LiveWorkerSettings"]
+    healthcheck:
+      test: ["CMD", "arq", "--check", "app.worker.LiveWorkerSettings"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  worker-bulk:
+    <<: *runtime
+    command: ["arq", "app.worker.BulkWorkerSettings"]
+    healthcheck:
+      test: ["CMD", "arq", "--check", "app.worker.BulkWorkerSettings"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  valkey:
+    image: valkey/valkey:8.1-alpine
+    restart: unless-stopped
+    command:
+      - valkey-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --maxmemory-policy
+      - noeviction
+    networks:
+      - queue
+    volumes:
+      - valkey-data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+
+  otel-collector:
+    image: otel/opentelemetry-collector:0.162.0
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol/config.yaml"]
+    environment:
+      GOMEMLIMIT: 160MiB
+      AXIOM_DOMAIN: ${AXIOM_DOMAIN:-api.axiom.co}
+      AXIOM_API_TOKEN: ${AXIOM_API_TOKEN:-}
+      AXIOM_TRACES_DATASET: ${AXIOM_TRACES_DATASET:-}
+      AXIOM_METRICS_DATASET: ${AXIOM_METRICS_DATASET:-}
+    volumes:
+      - type: bind
+        source: ${OTEL_COLLECTOR_CONFIG:-./otel-collector.yml}
+        target: /etc/otelcol/config.yaml
+        read_only: true
+
+networks:
+  queue:
+    internal: true
+
+volumes:
+  valkey-data:
